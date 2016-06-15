@@ -1,0 +1,203 @@
+from pandas.io.data import DataReader
+from datetime import datetime
+import matplotlib.pyplot as plt
+from matplotlib import style
+import numpy as np
+import statistics as Stats
+import math
+import random
+import heapq
+from multiprocessing import Process
+import multiprocessing
+
+#============================= DATA ===================================================
+class Prices:
+    def Spread(AssetA,AssetB,StartPeriod,EndPeriod):
+        AssetA = DataReader(AssetA,'yahoo', datetime(StartPeriod,1,1), datetime(EndPeriod,6,3))
+        AssetB = DataReader(AssetB,'yahoo', datetime(StartPeriod,1,1), datetime(EndPeriod,6,3))
+        #=========================== SPREADS ==========================================
+        Spread = abs(AssetA['Adj Close'] - AssetB['Adj Close'])
+        return Spread
+
+    def Price(Asset,StartPeriod,EndPeriod):
+        Asset = DataReader(Asset,'yahoo', datetime(StartPeriod,1,1), datetime(EndPeriod,6,3))
+        return (Asset['Adj Close'])
+
+#=======================================================================================
+def StDev(values):
+    global MovingAve
+    length = len(values)
+    m = sum(values)/length
+    total_sum = 0
+    for i in range(length):
+        total_sum+=(values[i]-m)**2
+    under_root = total_sum*1.0/length
+    return(math.sqrt(under_root))
+#=========================================================================================
+MovingAverage=[]
+LowerBand=[]
+UpperBand=[]
+
+#=========================================================================================
+class Calculations:
+    def MovingAverage(Pairs,n):
+        for i in range(len(Pairs)):
+            if len(Pairs) - 20 > i:
+                MovingAverage.append(sum(Pairs[i:n+i])/len(Pairs[i:n+i]))
+        return MovingAverage
+
+    def MovingAve(values,window):
+        weights = np.repeat(1.0,window)/window
+        smas = np.convolve(values,weights,'valid')
+        return smas
+
+    def EWMA(Pairs,n):
+        weights = np.exp(np.linspace(-1.,0.,n))
+        weights/=weights.sum()
+        a = np.convolve(Pairs,weights)[:len(Pairs)]
+        a[:n]=a[n]
+        return a
+
+    def UpperBand(Pairs,n,NumOfDeviations):
+        for i in range(len(Pairs)):
+            if len(Pairs) - 20 > i:
+                UpperBand.append(NumOfDeviations*StDev(Pairs[i:n+i])+sum(Pairs[i:n+i])/len(Pairs[i:n+i]) + 0.3)
+        return UpperBand
+    def LowerBand(Pairs,n,NumOfDeviations):
+        for i in range(len(Pairs)):
+            LowerBand.append(sum(Pairs[i:n+i])/len(Pairs[i:n+i])-NumOfDeviations*StDev(Pairs[i:n+i]) - 0.3)
+        return LowerBand
+
+#==========================================================================================
+
+def Strategy(n,Deviations):
+    Spread = Prices.Spread("IGE","EWA",2008,2016)
+    mean=Calculations.MovingAverage(Spread,n)
+    UpperBand=Calculations.UpperBand(Spread,n,Deviations)
+    LowerBand=Calculations.LowerBand(Spread,n,Deviations)
+    j=0
+    AssetA= Prices.Price("IGE",2008,2016)
+    AssetB= Prices.Price("EWA",2008,2016)
+    CumulativeReturn = []
+    Position = []
+    InInvestement = 1000
+    k=0
+    TradingYears = 8
+    #========================================================================================
+    while j < (TradingYears*250):
+        if Spread[j] > UpperBand[j]:
+            PositionOpend = InInvestement - AssetA[j] + AssetB[j]
+            State = 1
+            if State==1:
+                while Spread[j] > mean[j]:
+                    State=1
+                    j+=1
+                    if Spread[j] < mean[j]:
+                        PositionClosed = InInvestement + AssetA[j] - AssetB[j]
+                        Position.append(InInvestement - AssetA[j] + AssetB[j])
+                        State=0
+            CumulativeReturn.append((PositionClosed-PositionOpend)/PositionClosed)
+        else:
+            j+=1
+    while k < (TradingYears*250):
+        if Spread[k] < LowerBand[k]:
+            PositionOpend = InInvestement + AssetA[k] - AssetB[k]
+            Position.append(PositionOpend)
+            State = 1
+            if State == 1:
+                while Spread[k] < mean[k]:
+                    State=1
+                    k+=1
+                    if Spread[k] > mean[k]:
+                        PositionClosed = InInvestement - AssetA[k] + AssetB[k]
+                        Position.append(InInvestement - AssetA[j] + AssetB[j])
+                        State=0
+            CumulativeReturn.append((PositionClosed-PositionOpend)/PositionClosed)
+        else:
+            k+=1
+    #============================================================================================   
+    CumRet = sum(CumulativeReturn)*100
+    var = Stats.variance(Position)
+    SharpeRatio = CumRet/var
+    return(CumRet)
+#=========================================== INITIAL POPULATION ================================ 
+def Population():
+    Parameters=[]
+    SMA = np.random.randint(100,250,50)
+    Deviations = np.random.random(50)+1.8
+    for i in range(len(SMA)):
+        Parameters.append([SMA[i],Deviations[i]])
+    return(Parameters)
+#======================================= FITNESS FUNCTION =======================================
+Parameters = Population()
+ExcessReturns=[]
+for l in range(len(Parameters)):
+    mean=[]
+    UpperBand=[]
+    LowerBand=[]
+    Spread=[]
+    CumulativeReturn=[]
+    PotSolution = Strategy(Parameters[l][0],Parameters[l][1])
+    del mean
+    del UpperBand
+    del LowerBand
+    del Spread
+    del CumulativeReturn
+    ExcessReturns.append(PotSolution)
+
+Vector_Largest = heapq.nlargest(15,ExcessReturns)
+Position=[]        
+for i, j in enumerate(ExcessReturns):
+    for k in range(len(Vector_Largest)):
+        if j==Vector_Largest[k]:
+               Position.append(i)
+#==================================================================================================
+print("Generation 1 ===== Excess Return:",max(Vector_Largest))
+
+
+#======================================= EVOLUTION ================================================
+while True:
+    Child=[]
+    Position=[]
+    NewReturns=[]
+    #==============================================================================================
+    for i, j in enumerate(ExcessReturns):
+        for k in range(len(Vector_Largest)):
+            if j==Vector_Largest[k]:
+               Position.append(i)    
+
+    #================ MUTATION  & CROSSOVER =======================================================
+    Parents_1 = []
+    Parents_2 = []
+    for i in range(5):
+        Parents_1.append(Parameters[Position[i]][0])
+        Parents_2.append(Parameters[Position[i]][1])
+    SMA = np.random.randint(120,250,5)
+    Deviations = np.random.random(5)+1.8
+    for i in range(len(SMA)):
+        Parents_1.append(SMA[i])
+        Parents_2.append(Deviations[i])
+
+    for i in range(len(Parents_1)):
+        ChoiceA = random.choice(Parents_1)
+        ChoiceB = random.choice(Parents_2)
+        Child.append([ChoiceA,ChoiceB])
+
+    #=============== CHILDREN FITNESS =============================================================
+    for l in range(len(Parents_1)):
+        mean=[]
+        UpperBand=[]
+        LowerBand=[]
+        Spread=[]
+        CumulativeReturn=[]
+        Solution = Strategy(Child[l][0],Child[l][1])
+        del mean
+        del UpperBand
+        del LowerBand
+        del Spread
+        del CumulativeReturn
+        NewReturns.append(Solution)
+        Vector_Largest = heapq.nlargest(15,NewReturns)
+        ExcessReturns = NewReturns
+    print("Next Generation=====Excess Return:",max(NewReturns),"%")
+    print("===================================================")
